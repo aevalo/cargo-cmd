@@ -1,3 +1,7 @@
+[workspace]
+members = ["member1", "path/to/member2", "crates/*"]
+exclude = ["crates/foo", "path/to/other"]
+
 [package]
 name = "cargo-cmd"
 description = "Alias any shell command in your Cargo.toml. It's like npm scripts, but for cargo."
@@ -34,6 +38,7 @@ serde = { version = "1.0.104", features = ["derive"] }
 subprocess = "0.2.4"
 structopt = "0.3.11"
 clap = "2.33.0"
+glob = "0.3.0"
 
 [dev-dependencies]
 assert_cli = "0.6.3"

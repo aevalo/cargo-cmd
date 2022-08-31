@@ -4,13 +4,14 @@ extern crate clap;
 extern crate structopt;
 extern crate subprocess;
 extern crate toml;
+extern crate glob;
 
-use std::collections::HashMap;
-use std::fs::File;
-use std::io::Read;
 use std::process;
+use std::vec::Vec;
 use structopt::StructOpt;
 use subprocess::{Exec, ExitStatus};
+use std::convert::TryFrom;
+use cargo::GetCommands;
 
 #[derive(StructOpt, Debug)]
 #[structopt(name = "cargo-cmd", bin_name = "cargo")]
@@ -24,20 +25,7 @@ enum Cli {
     },
 }
 
-#[derive(Deserialize, Debug)]
-struct Cargotoml {
-    package: Package,
-}
-
-#[derive(Deserialize, Debug)]
-struct Package {
-    metadata: Metadata,
-}
-
-#[derive(Deserialize, Debug)]
-struct Metadata {
-    commands: HashMap<String, String>,
-}
+mod cargo;
 
 fn main() {
     let cli = Cli::from_args();
@@ -87,37 +75,21 @@ fn unwrap_or_exit<T>(result: Result<T, String>) -> T {
 }
 
 fn get_commands(command: &str) -> Result<Vec<(String, String)>, String> {
-    let mut cargo_toml = File::open("Cargo.toml").or(Err(
-        "Could not find or open Cargo.toml in the current directory",
-    ))?;
-    let mut cargo_str = String::new();
     let mut commands = vec![];
-    let names = vec![
-        format!("pre{}", command),
-        command.to_string(),
-        format!("post{}", command),
-    ];
-
-    cargo_toml
-        .read_to_string(&mut cargo_str)
-        .or(Err("Could not read the contents of Cargo.toml"))?;
-
-    let cargo_toml: Cargotoml =
-        toml::from_str(&cargo_str[..]).or(Err("Could not find commands in Cargo.toml"))?;
-
-    let cargo_commands = cargo_toml.package.metadata.commands;
-
-    for name in names {
-        let command_to_run = &cargo_commands.get(&name);
-
-        if name == command && command_to_run.is_none() {
-            return Err(format!("Command \"{}\" not found in Cargo.toml", &command));
-        }
-
-        if command_to_run.is_some() {
-            commands.push((name, command_to_run.unwrap().to_string()));
-        }
+    let cargo_toml = cargo::from_path("Cargo.toml").map_err(|err| format!("{}", err))?;
+    if cargo_toml.is_package() {
+        let package = cargo::Package::try_from(cargo_toml).unwrap();
+        let mut package_commands = package.get_commands(command).map_err(|err| format!("{}", err))?;
+        commands.append(&mut package_commands);
+    } else if cargo_toml.is_root_package() {
+        let root_package = cargo::RootPackage::try_from(cargo_toml).unwrap();
+        let mut root_package_commands = root_package.get_commands(command).map_err(|err| format!("{}", err))?;
+        commands.append(&mut root_package_commands);
     }
-
+    else if cargo_toml.is_virtual_manifest() {
+        let workspace = cargo::Workspace::try_from(cargo_toml).unwrap();
+        let mut workspace_commands = workspace.get_commands(command).map_err(|err| format!("{}", err))?;
+        commands.append(&mut workspace_commands);
+    }
     Ok(commands)
 }
