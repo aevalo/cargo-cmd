@@ -11,7 +11,7 @@ use std::vec::Vec;
 use structopt::StructOpt;
 use subprocess::{Exec, ExitStatus};
 use std::convert::TryFrom;
-use cargo::GetCommands;
+//use cargo::GetCommands;
 
 #[derive(StructOpt, Debug)]
 #[structopt(name = "cargo-cmd", bin_name = "cargo")]
@@ -76,8 +76,25 @@ fn unwrap_or_exit<T>(result: Result<T, String>) -> T {
 
 fn get_commands(command: &str) -> Result<Vec<(String, String)>, String> {
     let mut commands = vec![];
-    let cargo_toml = cargo::from_path("Cargo.toml").map_err(|err| format!("{}", err))?;
-    if cargo_toml.is_package() {
+    /*let content = cargo::read_file("Cargo.toml").map_err(|err| format!("{}", err))?;
+    let toml = content.parse::<toml::Value>().unwrap();
+    if let toml::Value::Table(cargo_toml) = toml {
+        if cargo_toml.contains_key("package") {
+            let package = cargo_toml.get("package").unwrap();
+            println!("{:?}", package);
+            let metadata = package.get("metadata").unwrap();
+            println!("{:?}", metadata);
+            let commands = metadata.get("commands").unwrap();
+            println!("{:?}", commands);
+            let pass: Option<&str> = commands.get("pass").and_then(|value| value.as_str());
+            println!("{:?}", pass);
+            let nonexistent: Option<&str> = commands.get("nonexistent").and_then(|value| value.as_str());
+            println!("{:?}", nonexistent);
+        }
+    }*/
+    let cargo_toml = cargo::CargoToml::from_path("Cargo.toml").map_err(|err| format!("{}", err))?;
+    println!("{:?}", cargo_toml);
+    /*if cargo_toml.is_package() {
         let package = cargo::Package::try_from(cargo_toml).unwrap();
         let mut package_commands = package.get_commands(command).map_err(|err| format!("{}", err))?;
         commands.append(&mut package_commands);
@@ -87,9 +104,9 @@ fn get_commands(command: &str) -> Result<Vec<(String, String)>, String> {
         commands.append(&mut root_package_commands);
     }
     else if cargo_toml.is_virtual_manifest() {
-        let workspace = cargo::Workspace::try_from(cargo_toml).unwrap();
-        let mut workspace_commands = workspace.get_commands(command).map_err(|err| format!("{}", err))?;
+        let virtual_manifest = cargo::VirtualManifest::try_from(cargo_toml).unwrap();
+        let mut workspace_commands = virtual_manifest.get_commands(command).map_err(|err| format!("{}", err))?;
         commands.append(&mut workspace_commands);
-    }
+    }*/
     Ok(commands)
 }
