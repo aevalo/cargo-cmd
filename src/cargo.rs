@@ -28,40 +28,48 @@ fn read_file(path: &str) -> Result<String, Error> {
     Ok(content)
 }
 
-fn extend_globs(patterns: Vec<String>, excludes: Vec<String>) -> Result<Vec<PathBuf>, Error> {
-    let exclude_path_bufs = excludes.iter().map(|exclude| PathBuf::from(exclude)).collect::<Vec<PathBuf>>();
-    let mut paths = vec![];
-    for pattern in patterns {
-        let path_bufs = extend_glob(pattern.as_str())?;
-        path_bufs.iter().for_each(|path_buf| {
-            if !exclude_path_bufs.contains(path_buf) {
-                paths.push(path_buf.to_owned())
-            }
-        });
-    };
-    Ok(paths)
+fn extend_manifest_paths(patterns: Vec<String>, excludes: Vec<PathBuf>) -> Result<Vec<String>, Error> {
+    let mut manifest_paths = vec![];
+    let path_bufs = extend_globs(patterns, excludes)?;
+    for path_buf in path_bufs {
+        if let Some(manifest_path) = path_buf.join("Cargo.toml").to_str() {
+            manifest_paths.push(String::from(manifest_path));
+        } else {
+            return Err(Error {
+                kind: ErrorKind::PathBufConversionError(format!("{:?}", path_buf)),
+                message: String::from("Failed to convert path to string"),
+            });
+        }
+    }
+    Ok(manifest_paths)
 }
 
-fn extend_glob(pattern: &str) -> Result<Vec<PathBuf>, Error> {
-    match glob(pattern) {
-        Err(error) => Err(Error {
-            kind: ErrorKind::from(error),
-            message: format!("Invalid glob pattern \"{}\"", pattern),
-        }),
-        Ok(paths) => {
-            let mut path_bufs = vec![];
-            for path in paths {
-                match path {
-                    Err(error) => return Err(Error {
-                        kind: ErrorKind::from(error),
-                        message: String::from("Error reading path for globbing"),
-                    }),
-                    Ok(path) => path_bufs.push(path)
+fn extend_globs(patterns: Vec<String>, excludes: Vec<PathBuf>) -> Result<Vec<PathBuf>, Error> {
+    let mut path_bufs = vec![];
+    for pattern in patterns {
+        match glob(pattern.as_str()) {
+            Err(error) => return Err(Error {
+                kind: ErrorKind::from(error),
+                message: format!("Invalid glob pattern \"{}\"", pattern),
+            }),
+            Ok(paths) => {
+                for path in paths {
+                    match path {
+                        Err(error) => return Err(Error {
+                            kind: ErrorKind::from(error),
+                            message: String::from("Error reading path for globbing"),
+                        }),
+                        Ok(path) => {
+                            if !excludes.contains(&path) {
+                                path_bufs.push(path)
+                            }
+                        }
+                    }
                 }
-            };
-            Ok(path_bufs)
-        },
+            },
+        }
     }
+    Ok(path_bufs)
 }
 
 pub trait GetCommands {
@@ -162,43 +170,29 @@ impl TryFrom<toml::Value> for Workspace {
     fn try_from(value: toml::Value) -> Result<Self, Self::Error> {
         if value.is_table() {
             let members = if let Some(members) = value.get("members") {
-                if members.is_array() {
-                    let excludes = value.get("exclude").map_or(Ok(vec![]), |exclude| {
-                        exclude.clone().try_into::<Vec<String>>().map_err(|error| Error {
-                            kind: ErrorKind::from(error),
-                            message: format!("Failed to convert workspace excludes"),
-                        })
-                    })?;
-                    let patterns = members.clone().try_into::<Vec<String>>().map_err(|error| Error {
+                let patterns = members.clone().try_into::<Vec<String>>().map_err(|error| Error {
+                    kind: ErrorKind::from(error),
+                    message: format!("Failed to convert workspace members"),
+                })?;
+                let excludes = value.get("exclude").map_or(Ok(vec![]), |exclude| {
+                    exclude.clone().try_into::<Vec<PathBuf>>().map_err(|error| Error {
                         kind: ErrorKind::from(error),
-                        message: format!("Failed to convert workspace members"),
-                    })?;
-                    let path_bufs = extend_globs(patterns, excludes)?;
-                    let packages: Result<Vec<Package>, Error> = path_bufs.iter().map(|path| {
-                        if let Some(cargo_toml_path) = path.join("Cargo.toml").to_str() {
-                            let cargo_toml = CargoToml::from_path(cargo_toml_path)?;
-                            if let CargoToml::Package { path, package } = cargo_toml {
-                                Ok(package)
-                            } else {
-                                Err(Error {
-                                    kind: ErrorKind::MalformedManifest(String::from("Only package members are currently supported")),
-                                    message: format!("Failed to convert workspace"),
-                                })
-                            }
-                        } else {
-                            Err(Error {
-                                kind: ErrorKind::PathBufConversionError(format!("{:?}", path)),
-                                message: String::from("Failed to convert path to string"),
-                            })
-                        }
-                    }).collect();
-                    packages
-                } else {
-                    Err(Error {
-                        kind: ErrorKind::MalformedManifest(String::from("Workspace members is not an array")),
-                        message: format!("Failed to convert workspace"),
+                        message: format!("Failed to convert workspace excludes"),
                     })
-                }
+                })?;
+                let manifest_paths = extend_manifest_paths(patterns, excludes)?;
+                let packages: Result<Vec<Package>, Error> = manifest_paths.iter().map(|path| {
+                    let cargo_toml = CargoToml::from_path(path)?;
+                    if let CargoToml::Package { path, package } = cargo_toml {
+                        Ok(package)
+                    } else {
+                        Err(Error {
+                            kind: ErrorKind::MalformedManifest(String::from("Only package members are currently supported")),
+                            message: format!("Failed to convert workspace"),
+                        })
+                    }
+                }).collect();
+                packages
             } else {
                 Err(Error {
                     kind: ErrorKind::MalformedManifest(String::from("Workspace does not contain members")),
